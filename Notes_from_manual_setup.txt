@@ -1,0 +1,686 @@
+# ================== #
+# Project-1 [prj-01] #
+# ================== #
+
+# Step-1 - Network Setup
+# ======================
+
+Region - ap-south-1
+Tags
+    - project : prj-01
+
+# VPC
+# ===
+Name - prj-01-vpc : vpc-0e59b53588880f66b
+CIDR - 192.168.0.0/16
+DNS Support   - Enabled
+DNS Hostnames - Enabled
+
+# Subnets
+# =======
+Names
+    - prj-01-subnet-1 : AZ - ap-south-1a [PUBLIC]  : subnet-0b8f424822dbcef0a : 192.168.0.0/18
+    - prj-01-subnet-2 : AZ - ap-south-1c [PRIVATE] : subnet-0ffb67884e089993c : 192.168.64.0/18
+    - prj-01-subnet-3 : AZ - ap-south-1a [PUBLIC]  : subnet-0fd11368f999a807f : 192.168.128.0/18
+    - prj-01-subnet-4 : AZ - ap-south-1c [PRIVATE] : subnet-0a31d3e238ee8accb : 192.168.192.0/18
+
+Public  Subnets : prj-01-subnet-1 & prj-01-subnet-3 (AZ: ap-south-1a) → Route Table with IGW
+Private Subnets : prj-01-subnet-2 & prj-01-subnet-4 (AZ: ap-south-1c) → Route Table with NAT GW
+
+# Internet Gateway
+# ================
+Name - igw-prj-01 : igw-0e422b8b9924e3642
+Attached to VPC - vpc-0e59b53588880f66b
+
+# Elastic IP (for NAT Gateway)
+# ============================
+Name - eip-prj-01
+Note - Required for NAT Gateway. Must be explicitly created and associated.
+
+# NAT Gateway
+# ===========
+Name    - nat-gway-prj-01-01 : nat-12af54d5327807726 [Regional]
+Subnet  - prj-01-subnet-1 (Public subnet — NAT GW must be in a public subnet!)
+EIP     - eip-prj-01
+Note    - Lambda functions never have public IPs. Even if placed in a public subnet,
+          they cannot use IGW directly. NAT GW is required for internet access from Lambda.
+
+# Route Tables
+# ============
+[Public Route Table — with IGW]
+Name     : rt-proj-01-01 : rtb-024d03cac3ec2f88e
+Route    : 0.0.0.0/0 → IGW
+Subnets  : prj-01-subnet-1 & prj-01-subnet-3
+
+[Private Route Table — with NAT GW]
+Name     : rt-proj-01-02 : rtb-0a56e522fbac3d66f
+Route    : 0.0.0.0/0 → NAT Gateway (nat-gway-prj-01-01)
+Subnets  : prj-01-subnet-2 & prj-01-subnet-4
+
+Traffic routing summary:
++----------------+-------------------------------+-------------------------------------+
+| Resource       | Placement / Associations      | Route Table Rule                    |
++----------------+-------------------------------+-------------------------------------+
+| Lambda 1       | SN-1 & SN-3 (Public Subnets)  | Associated with RT-1 (IGW)          |
+| Lambda 2       | SN-2 & SN-4 (Private Subnets) | Associated with RT-2 (NAT GW)       |
+| NAT Gateway    | SN-1 (Public Subnet)          | Associated with RT-1 (IGW)          |
+| Internet Access| RT-2 (Private)                | 0.0.0.0/0 → Target: NAT Gateway ID  |
+| S3 Access      | RT-2 (Private)                | pl-xxxxxxxx → Target: S3 Endpoint ID|
++----------------+-------------------------------+-------------------------------------+
+
+For External Files : Traffic goes: Lambda → RT-2 → NAT Gateway → Internet (paid)
+For S3             : Traffic goes: Lambda → RT-2 → S3 Gateway Endpoint → S3 (free)
+
+# S3 Gateway Endpoint
+# ===================
+Name         - prj-01-s3-endpoint
+Service name - com.amazonaws.ap-south-1.s3 [Gateway Type]
+VPC          - vpc-0e59b53588880f66b
+Route Tables - rt-proj-01-01 (public) AND rt-proj-01-02 (private)
+Note         - Provides private tunnel between VPC and S3. No internet traffic. No cost.
+               Without this, Lambda on VPC cannot reach S3.
+
+# Security Group
+# ==============
+Name - prj-01-sg-ec2-001
+VPC  - vpc-0e59b53588880f66b
+
+Inbound Rules:
++------------------+---------+------------+-------------+------------------------------------------+
+| Type             | Protocol| Port Range | Source      | Description                              |
++------------------+---------+------------+-------------+------------------------------------------+
+| SSH              | TCP     | 22         | 0.0.0.0/0   | Allow SSH access                         |
+| MYSQL/Aurora     | TCP     | 3306       | Self (SG)   | Allow RDS connection from within SG      |
+| All TCP          | TCP     | 0-65535    | Self (SG)   | Allow all TCP within SG for Glue workers |
++------------------+---------+------------+-------------+------------------------------------------+
+
+Outbound Rules:
++------------------+---------+------------+-------------+------------------------------------------+
+| Type             | Protocol| Port Range | Destination | Description                              |
++------------------+---------+------------+-------------+------------------------------------------+
+| All traffic      | All     | All        | 0.0.0.0/0   | Allow all outbound traffic               |
++------------------+---------+------------+-------------+------------------------------------------+
+
+** IMPORTANT: The "All TCP self-referencing" rule (0-65535) is REQUIRED for Glue jobs.
+   Glue workers communicate with each other and need unrestricted TCP within the SG.
+   Without this rule, Glue jobs will fail with:
+   "At least one security group must open all ingress ports"
+
+# EC2 Instances
+# =============
+Name     - prj-01-test-instance
+Keypair  - prj-01-ec2-keypair.pem
+Subnet   - prj-01-subnet-1 (public subnet — needs public IP for SSH access)
+SG       - prj-01-sg-ec2-001
+Note     - Used as bastion host to access private RDS instance
+
+
+# Step-2 - Configure CloudWatch
+# ==============================
+Navigate: CloudWatch >> Logs >> Logs Management >> Create log group
+
+Log Groups:
+    - Lambda        : /aws/prj-01/lambda
+    - Step Functions: /aws/prj-01/step-functions
+    - Glue Jobs     : /aws/prj-01/glue-jobs
+    - Glue Crawlers : /aws/prj-01/glue-crawler
+
+Retention - 2 weeks [14 days]
+
+Note: Glue also writes to its default log groups (/aws/glue/jobs/logs-v2, /aws/glue/crawlers)
+      which cannot be overridden. The custom log group above receives continuous logs
+      via --continuous-log-logGroup job parameter in addition to the default logs.
+
+
+# Step-3 - Setup Lambda
+# =====================
+
+# Lambda 1 — Creates ingestion folders in S3
+# ------------------------------------------
+Name     - prj-01-001-create-ingestion-folders-on-s3
+Runtime  - Python 3.12
+Timeout  - 2 min (120 seconds)
+VPC      - vpc-0e59b53588880f66b
+Subnets  - prj-01-subnet-1, prj-01-subnet-3 (PUBLIC subnets — uses S3 Gateway Endpoint)
+SG       - prj-01-sg-ec2-001
+
+Folders created:
+    - data/raw/accounts/
+    - data/raw/customers/
+    - data/harmonized/customers_to_accounts/
+    - data/curated/
+
+Environment Variables:
+    - S3_BUCKET_NAME = <bucket-name>   ← NOT hardcoded in code!
+
+Role   - custom-role-prj-01-lambda
+Policy - custom-policy-prj-01-lambda-execution
+
+Policy JSON:
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "S3Access",
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutObject",
+                "s3:GetObject",
+                "s3:ListBucket",
+                "s3:DeleteObject"
+            ],
+            "Resource": [
+                "arn:aws:s3:::kr-de-analytics-demo-np-01",
+                "arn:aws:s3:::kr-de-analytics-demo-np-01/*"
+            ]
+        },
+        {
+            "Sid": "VPCAccess",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:CreateNetworkInterface",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DeleteNetworkInterface",
+                "ec2:AssignPrivateIpAddresses",
+                "ec2:UnassignPrivateIpAddresses"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "Logging",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "arn:aws:logs:*:*:*"
+        }
+    ]
+}
+
+Lambda Code:
+import boto3
+import os
+
+def lambda_handler(event, context):
+  s3 = boto3.client('s3')
+  bucket_name = os.environ['S3_BUCKET_NAME']  # from environment variable
+
+  print("Executing Lambda - 001-lambda-create-s3-folders")
+
+  folders = [
+    "data/raw/accounts/",
+    "data/raw/customers/",
+    "data/harmonized/customers_to_accounts/",
+    "data/curated/"
+  ]
+
+  for folder in folders:
+    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=folder, MaxKeys=1)
+
+    if 'Contents' in response:
+      print(f">>>> Folder: [{folder}] already exists.")
+    else:
+      print(f">>>> Folder: [{folder}] doesn't exist. Creating folder...")
+      s3.put_object(Bucket=bucket_name, Key=folder)
+      print(f"Folder created: {folder}")
+
+  return {
+    'statusCode': 200,
+    'body': 'Folder check and creation process completed'
+  }
+
+
+# Lambda 2 — Ingest sample files from remote server to S3
+# --------------------------------------------------------
+Name     - prj-01-002-ingest-files-to-s3
+Runtime  - Python 3.12
+Timeout  - 2 min (120 seconds)
+VPC      - vpc-0e59b53588880f66b
+Subnets  - prj-01-subnet-2, prj-01-subnet-4 (PRIVATE subnets — needs NAT GW for internet!)
+SG       - prj-01-sg-ec2-001
+
+Files ingested:
+    - data/raw/accounts/<yyyy-MM-dd>/sample_accounts.csv
+    - data/raw/customers/<yyyy-MM-dd>/sample_customers.csv
+
+Environment Variables:
+    - S3_BUCKET_NAME = <bucket-name>   ← NOT hardcoded in code!
+
+** IMPORTANT: Lambda 2 MUST be in PRIVATE subnets (not public).
+   Reason: Lambda functions have no public IP.
+   Even in a public subnet with IGW, Lambda cannot reach the internet.
+   Solution: Place Lambda in private subnet → traffic routes via NAT Gateway → internet.
+
+Role   - custom-role-prj-01-lambda (same as Lambda 1)
+Policy - custom-policy-prj-01-lambda-execution (same as Lambda 1)
+
+Lambda Code:
+import boto3
+import urllib.request
+import os
+from datetime import datetime
+
+def lambda_handler(event, context):
+  s3 = boto3.client('s3')
+  bucket_name = os.environ['S3_BUCKET_NAME']  # from environment variable
+
+  current_date = datetime.utcnow().strftime("%Y-%m-%d")
+  print(f">>>> Executing the app for date: {current_date}")
+
+  files = {
+    "sample_accounts.csv": {
+      "source": "https://gist.githubusercontent.com/krohit-bkk/b52dfbbd0168276da24e4e42ec4d5e86/raw/29bc257ab61fa60296e3227b6ea18585fb794d6b/sample_accounts.csv",
+      "target": f"data/raw/accounts/{current_date}/sample_accounts.csv"
+    },
+    "sample_customers.csv": {
+      "source": "https://gist.githubusercontent.com/krohit-bkk/b52dfbbd0168276da24e4e42ec4d5e86/raw/29bc257ab61fa60296e3227b6ea18585fb794d6b/sample_customer.csv",
+      "target": f"data/raw/customers/{current_date}/sample_customers.csv"
+    }
+  }
+
+  total = len(files)
+  counter = 1
+  for name, info in files.items():
+    print(f"\n>>>> Processing {counter}/{total} files...")
+    print(f">>>> File name: [{name}]")
+    target_key = info["target"]
+
+    try:
+      s3.head_object(Bucket=bucket_name, Key=target_key)
+      print(f">>>> File already exists in S3: {target_key} — will overwrite.")
+    except s3.exceptions.ClientError:
+      print(f">>>> File does not exist yet: {target_key}")
+
+    response = urllib.request.urlopen(info["source"])
+    data = response.read()
+
+    s3.put_object(Bucket=bucket_name, Key=target_key, Body=data)
+    print(f">>>> Uploaded {name} to {target_key}")
+    counter += 1
+
+  return {
+    'statusCode': 200,
+    'body': 'Files ingested successfully into S3'
+  }
+
+
+# Step-4 - Setup Glue ETLs
+# ========================
+
+# Glue VPC Connection
+# -------------------
+Name            - prj-01-conn-vpc
+Connection Type - NETWORK
+VPC             - vpc-0e59b53588880f66b
+Subnet          - prj-01-subnet-2 | ap-south-1c
+Security Group  - prj-01-sg-ec2-001
+Note            - Required for Glue jobs to access resources inside VPC
+
+# Glue RDS Connection
+# -------------------
+Name            - prj-01-conn-rds-mysql
+Connection Type - JDBC
+JDBC URL        - jdbc:mysql://<rds-endpoint>/project_01
+Data Source     - MySQL
+DB Instance     - prj-01-rds-mysql-01
+DB Name         - project_01
+Credentials     - AWS Secrets Manager (auto-managed)
+IAM Role        - custom-role-prj-01-glue
+VPC             - vpc-0e59b53588880f66b
+Subnet          - prj-01-subnet-2 | ap-south-1c
+Security Group  - prj-01-sg-ec2-001
+Description     - Connects Glue with RDS MySQL Instance
+
+# Glue Job-1 — prj-01-01-merge-customers-accounts
+# ------------------------------------------------
+Role        - custom-role-prj-01-glue
+Connection  - prj-01-conn-vpc
+Glue Version- 4.0
+Worker Type - G.1X
+Workers     - 2
+
+Job Parameters:
+    - --continuous-log-logGroup  = /aws/prj-01/glue-jobs
+    - --S3_BUCKET_NAME           = <bucket-name>   ← passed as job parameter, NOT hardcoded!
+
+Policy - custom-policy-prj-01-glue-connection-catalog
+Policy JSON:
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "FullEC2NetworkingForGlue",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeSubnets",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeVpcEndpoints",
+                "ec2:DescribeRouteTables",
+                "ec2:CreateNetworkInterface",
+                "ec2:DeleteNetworkInterface",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:CreateNetworkInterfacePermission",
+                "ec2:CreateTags",
+                "ec2:DescribeVpcs",
+                "ec2:DescribeAvailabilityZones"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "GlueConnectionAndCatalogAccess",
+            "Effect": "Allow",
+            "Action": [
+                "glue:GetConnection",
+                "glue:GetDatabase",
+                "glue:GetDatabases",
+                "glue:GetTable",
+                "glue:GetTables",
+                "glue:GetPartition",
+                "glue:GetPartitions",
+                "glue:CreatePartition",
+                "glue:BatchCreatePartition",
+                "glue:BatchGetPartition",
+                "glue:CreateTable",
+                "glue:UpdateTable",
+                "glue:CreateConnection",
+                "glue:UpdateConnection"
+            ],
+            "Resource": [
+                "arn:aws:glue:ap-south-1:123456789012:catalog",
+                "arn:aws:glue:ap-south-1:123456789012:database/*",
+                "arn:aws:glue:ap-south-1:123456789012:table/*/*",
+                "arn:aws:glue:ap-south-1:123456789012:connection/*"
+            ]
+        },
+        {
+            "Sid": "S3AccessForDataAndScripts",
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetBucketLocation",
+                "s3:ListBucket",
+                "s3:GetBucketAcl",
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject"
+            ],
+            "Resource": [
+                "arn:aws:s3:::kr-de-analytics-demo-np-01",
+                "arn:aws:s3:::kr-de-analytics-demo-np-01/*",
+                "arn:aws:s3:::aws-glue-assets-123456789012-ap-south-1",
+                "arn:aws:s3:::aws-glue-assets-123456789012-ap-south-1/*"
+            ]
+        },
+        {
+            "Sid": "CloudWatchLogsAccess",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogStreams"
+            ],
+            "Resource": [
+                "arn:aws:logs:ap-south-1:123456789012:log-group:/aws/prj-01/glue-jobs:*",
+                "arn:aws:logs:ap-south-1:123456789012:log-group:/aws-glue/crawlers:*"
+            ]
+        },
+        {
+            "Sid": "SecretsManagerAccessForRDS",
+            "Effect": "Allow",
+            "Action": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret"
+            ],
+            "Resource": [
+                "arn:aws:secretsmanager:ap-south-1:123456789012:secret:rds!*"
+            ]
+        }
+    ]
+}
+
+Code: modules/glue/scripts/merge_customers_accounts.py
+
+
+# Glue Job-2 — prj-01-02-push-to-rds
+# ------------------------------------
+Role        - custom-role-prj-01-glue
+Connections - prj-01-conn-vpc, prj-01-conn-rds-mysql
+Glue Version- 4.0
+Worker Type - G.1X
+Workers     - 2
+
+Job Parameters:
+    - --continuous-log-logGroup  = /aws/prj-01/glue-jobs
+    - --S3_BUCKET_NAME           = <bucket-name>   ← passed as job parameter, NOT hardcoded!
+    - --RDS_CONNECTION_NAME      = prj-01-conn-rds-mysql ← passed as job parameter!
+
+Code: modules/glue/scripts/push_to_rds.py
+
+
+# Glue Catalog Databases
+# ----------------------
+Database Name - prj_01_db_on_s3
+Description   - Glue catalog database for Project-1 based on files from S3
+
+Database Name - prj_01_db_on_rds
+Description   - Glue catalog database for Project-1 based on tables from RDS (MySQL) instance
+
+Note: Glue database names do NOT support hyphens — use underscores only!
+
+
+# Glue Crawler-1 — prj-01-03-glue-crawler-s3-01
+# -----------------------------------------------
+Name        - prj-01-03-glue-crawler-s3-01
+Description - Glue crawler for Project-1 based on files from S3
+Role        - custom-role-prj-01-glue
+Target DB   - prj_01_db_on_s3
+Target Path - s3://<bucket>/data/harmonized/customers_to_accounts/
+Schedule    - On demand
+
+Note: S3 crawler catalogs S3 data into Glue Data Catalog → queryable via Athena ✅
+
+
+# Glue Crawler-2 — prj-01-04-glue-crawler-rds-01
+# ------------------------------------------------
+Name        - prj-01-04-glue-crawler-rds-01
+Description - Glue crawler for Project-1 based on tables from RDS (MySQL) instance
+Role        - custom-role-prj-01-glue
+Target DB   - prj_01_db_on_rds
+Connection  - prj-01-conn-rds-mysql
+Target Path - project_01/%
+Schedule    - On demand
+
+Note: RDS crawler catalogs RDS tables into Glue Data Catalog.
+      RDS catalog tables are used by Glue ETL jobs — NOT queryable via Athena directly!
+      To query RDS data via Athena → use Athena Federated Query (advanced setup).
+
+
+# Step-5 - Setup Step Functions
+# ==============================
+State Machine Name  - prj-01-step-function-01
+Type                - STANDARD
+Query Language      - JSONata  ← IMPORTANT! Affects syntax of state definitions!
+
+Role   - custom-role-prj-01-step-function
+Policy - custom-policy-prj-01-step-functions-cloudwatch
+
+States:
+    State-1 : Invoke_Folder_Creation_on_S3  → Lambda: prj-01-001-create-ingestion-folders-on-s3
+    State-2 : Ingest_Files_to_S3            → Lambda: prj-01-002-ingest-files-to-s3
+    State-3 : Trigger_Glue_ETL_1            → Glue Job: prj-01-01-merge-customers-accounts
+    State-4 : Trigger_Glue_ETL_2            → Glue Job: prj-01-02-push-to-rds
+    State-5 : Trigger_Crawlers (PARALLEL)
+        State-5.1 : Trigger_Glue_Crawler_for_S3  → Glue Crawler: prj-01-03-glue-crawler-s3-01
+        State-5.2 : Trigger_Glue_Crawler_for_RDS → Glue Crawler: prj-01-04-glue-crawler-rds-01
+
+** IMPORTANT Resource ARNs:
+    Lambda invoke        : arn:aws:states:::lambda:invoke
+    Glue job (sync)      : arn:aws:states:::glue:startJobRun.sync
+    Glue crawler         : arn:aws:states:::aws-sdk:glue:startCrawler  ← NOT glue:startCrawler!
+
+** IMPORTANT JSONata notes:
+    - Use "Arguments" instead of "Parameters"
+    - Use "Output" instead of "ResultPath"
+    - Do NOT use "ResultPath" — it is JSONPath only!
+    - Lambda FunctionName must include ":$LATEST" suffix
+
+Policy JSON:
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "StepFunctionLogging",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogDelivery",
+                "logs:GetLogDelivery",
+                "logs:UpdateLogDelivery",
+                "logs:DeleteLogDelivery",
+                "logs:ListLogDeliveries",
+                "logs:PutResourcePolicy",
+                "logs:DescribeResourcePolicies",
+                "logs:DescribeLogGroups",
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "AllowStepFunctionToRunGlueJob",
+            "Effect": "Allow",
+            "Action": [
+                "glue:StartJobRun",
+                "glue:GetJobRun",
+                "glue:BatchStopJobRun",
+                "glue:StartCrawler",
+                "glue:GetCrawler"
+            ],
+            "Resource": [
+                "arn:aws:glue:ap-south-1:123456789012:job/*",
+                "arn:aws:glue:ap-south-1:123456789012:crawler/*"
+            ]
+        },
+        {
+            "Sid": "AllowStepFunctionToPassGlueRole",
+            "Effect": "Allow",
+            "Action": [
+                "iam:PassRole"
+            ],
+            "Resource": "arn:aws:iam::123456789012:role/custom-role-prj-01-glue",
+            "Condition": {
+                "StringLike": {
+                    "iam:PassedToService": "glue.amazonaws.com"
+                }
+            }
+        },
+        {
+            "Sid": "AllowStepFunctionToInvokeLambda",
+            "Effect": "Allow",
+            "Action": [
+                "lambda:InvokeFunction"
+            ],
+            "Resource": "arn:aws:lambda:ap-south-1:123456789012:function:*"
+        },
+        {
+            "Sid": "EventBridgeAccessForSyncRuns",
+            "Effect": "Allow",
+            "Action": [
+                "events:PutTargets",
+                "events:PutRule",
+                "events:DescribeRule"
+            ],
+            "Resource": "arn:aws:events:ap-south-1:123456789012:rule/StepFunctionsGetEventsForGlueJobRunRule"
+        }
+    ]
+}
+
+
+# Step-6 - Setup RDS Instance
+# ===========================
+DB Instance Name - prj-01-rds-mysql-01
+Engine           - MySQL
+Engine Version   - 8.4.7          ← explicitly noted!
+Instance Class   - db.t4g.micro   ← explicitly noted!
+Master Username  - admin
+Credentials      - Managed in AWS Secrets Manager (auto-rotated)
+Allocated Storage- 20 GB (AWS minimum for MySQL — cannot go lower)
+Storage Type     - gp2
+Storage Encrypted- Yes
+Autoscaling      - Enabled (max 1000 GB) — disable for dev to avoid surprise costs!
+VPC              - vpc-0e59b53588880f66b
+Availability Zone- ap-south-1c
+Subnet Group     - Uses all 4 subnets across ap-south-1a AND ap-south-1c
+                   (AWS requires at least 2 AZs in subnet group!)
+Security Group   - prj-01-sg-ec2-001
+Public Access    - No (private RDS)
+Enhanced Monitoring - Enabled (60 second interval)
+IAM Role for Monitoring - rds-monitoring-role (uses AmazonRDSEnhancedMonitoringRole managed policy)
+Initial DB Name  - project_01
+Deletion Protection - Disabled (for dev)
+Final Snapshot   - Skipped (for dev)
+
+Inbound rule added to Security Group for Glue:
+    Type     - MYSQL/Aurora
+    Protocol - TCP
+    Port     - 3306
+    Source   - Self (prj-01-sg-ec2-001)
+    Desc     - Allow RDS connection from within SG
+
+Inbound rule added to Security Group for Glue workers:
+    Type     - All TCP
+    Protocol - TCP
+    Port     - 0-65535
+    Source   - Self (prj-01-sg-ec2-001)
+    Desc     - Allow all TCP within SG for Glue workers  ← CRITICAL! Without this Glue jobs fail!
+
+# Connecting to RDS (from EC2 bastion)
+# =====================================
+Step 1 - Install MySQL client on EC2:
+    sudo dnf install mariadb105 -y
+
+Step 2 - Get password from Secrets Manager:
+    aws secretsmanager get-secret-value \
+      --secret-id '<secret-arn>' \
+      --query SecretString \
+      --output text | jq -r '.password'
+
+Step 3 - Connect:
+    mysql -h <rds-endpoint> -P 3306 -u admin -p
+
+Step 4 - Query:
+    USE project_01;
+    SHOW TABLES;
+    SELECT COUNT(*) FROM customer_to_accounts;
+    SELECT * FROM customer_to_accounts LIMIT 10;
+
+Note: CloudShell cannot connect to private RDS — it runs outside the VPC!
+      Always use EC2 bastion in same VPC to connect to private RDS.
+
+
+# Athena
+# ======
+Note: Athena queries S3 data via Glue Data Catalog — comes wired out of the box!
+      No additional setup needed after Glue crawlers run.
+
+Database - prj_01_db_on_s3 (S3 data — queryable via Athena ✅)
+Database - prj_01_db_on_rds (RDS data — NOT directly queryable via Athena ❌)
+
+To query RDS data via Athena → requires Athena Federated Query setup (advanced).
+
+
+# Lessons Learned
+# ===============
+1. Always document exact AZ names (ap-south-1a, ap-south-1c) — NOT just AZ1/AZ2
+2. Security group needs ALL TCP self-referencing rule for Glue workers
+3. Lambda MUST be in private subnets to reach internet (via NAT GW)
+4. RDS subnet group requires subnets in at least 2 different AZs
+5. Glue crawler Step Functions ARN: arn:aws:states:::aws-sdk:glue:startCrawler
+   (NOT arn:aws:states:::glue:startCrawler — this doesn't exist!)
+6. Step Functions JSONata mode: use Arguments/Output, NOT Parameters/ResultPath
+7. Glue database names cannot contain hyphens — use underscores
+8. S3 bucket names must be globally unique across all AWS accounts
+9. NAT Gateway takes ~2 mins to provision — longest networking resource
+10. Lambda ENIs take 10-15 mins to clean up during subnet deletion — be patient!
