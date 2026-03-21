@@ -299,7 +299,7 @@ terraform destroy
 
 ## 👤 Author
 
-**Rohit Kumar**
+**Kumar Rohit**
 - GitHub: [@krohit-bkk](https://github.com/krohit-bkk)
 
 ---
