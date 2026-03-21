@@ -1,0 +1,5 @@
+# terraform.tfvars.example
+aws_region     = "ap-south-1"
+project_name   = "tf-prj-01"
+account_id     = "YOUR_AWS_ACCOUNT_ID"
+s3_bucket_name = "YOUR_UNIQUE_BUCKET_NAME"
