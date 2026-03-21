@@ -1,7 +1,7 @@
-# 📋 RUNBOOK — AWS DE Pipeline (Terraform)
+# 📋 RUNBOOK - AWS DE Pipeline (Terraform)
 ### Single Source of Truth for Fresh Reproduction
 
-> This runbook covers everything from scratch — prerequisites, setup, deployment, testing, and teardown.
+> This runbook covers everything from scratch - prerequisites, setup, deployment, testing, and teardown.
 > Follow steps in order. Every command is tested and verified.
 
 ---
@@ -209,7 +209,7 @@ account_id     = "YOUR_AWS_ACCOUNT_ID"
 s3_bucket_name = "YOUR_UNIQUE_BUCKET_NAME"
 ```
 
-### `terraform.tfvars` (gitignored — fill in your values)
+### `terraform.tfvars` (gitignored - fill in your values)
 ```hcl
 aws_region     = "ap-south-1"
 project_name   = "tf-prj-01"
@@ -255,13 +255,13 @@ variable "project_name" {
 variable "account_id" {
   description = "Your AWS account ID"
   type        = string
-  # no default — must be provided in terraform.tfvars
+  # no default - must be provided in terraform.tfvars
 }
 
 variable "s3_bucket_name" {
   description = "S3 bucket name used by Lambda and Glue"
   type        = string
-  # no default — must be provided in terraform.tfvars
+  # no default - must be provided in terraform.tfvars
 }
 ```
 
@@ -342,7 +342,7 @@ terraform plan -refresh=true
 
 ## 8. Deployment
 
-### Step 1 — Initialize
+### Step 1 - Initialize
 ```bash
 terraform init
 ```
@@ -352,14 +352,14 @@ Expected output:
 Terraform has been successfully initialized!
 ```
 
-### Step 2 — Plan
+### Step 2 - Plan
 ```bash
 terraform plan
 ```
 
 Expected resources on first run: **53 resources to add**
 
-### Step 3 — Apply
+### Step 3 - Apply
 ```bash
 terraform apply -auto-approve
 ```
@@ -370,7 +370,7 @@ terraform apply -auto-approve
 > - RDS: ~8 mins (longest resource)
 > - Everything else: seconds
 
-### Step 4 — Verify deployment
+### Step 4 - Verify deployment
 ```bash
 # Check VPC
 aws ec2 describe-vpcs \
@@ -471,18 +471,18 @@ SELECT COUNT(*) FROM customers_to_accounts;
 
 ### Query RDS MySQL via EC2 bastion
 
-**Step 1 — Connect to EC2 via Instance Connect:**
+**Step 1 - Connect to EC2 via Instance Connect:**
 ```
 AWS Console → EC2 → Instances → your-bastion-instance
 → Connect → EC2 Instance Connect → Connect
 ```
 
-**Step 2 — Install MySQL client:**
+**Step 2 - Install MySQL client:**
 ```bash
 sudo dnf install mariadb105 -y
 ```
 
-**Step 3 — Get RDS password from Secrets Manager:**
+**Step 3 - Get RDS password from Secrets Manager:**
 ```bash
 aws secretsmanager get-secret-value \
   --secret-id '<arn-for-rds-instance-secret-manager-entry>' \
@@ -490,7 +490,7 @@ aws secretsmanager get-secret-value \
   --output text | jq -r '.password'
 ```
 
-**Step 4 — Connect to RDS:**
+**Step 4 - Connect to RDS:**
 ```bash
 mysql -h tf-prj-01-rds-mysql-01.blahblah.ap-south-1.rds.amazonaws.com \
   -P 3306 \
@@ -498,7 +498,7 @@ mysql -h tf-prj-01-rds-mysql-01.blahblah.ap-south-1.rds.amazonaws.com \
   -p
 ```
 
-**Step 5 — Query data:**
+**Step 5 - Query data:**
 ```sql
 USE project_01;
 SHOW TABLES;
@@ -572,7 +572,7 @@ aws rds start-db-instance \
   --db-instance-identifier tf-prj-01-rds-mysql-01
 ```
 
-> ⚠️ NAT Gateway cannot be stopped — only destroyed. Recreate with `terraform apply` when needed.
+> ⚠️ NAT Gateway cannot be stopped - only destroyed. Recreate with `terraform apply` when needed.
 
 ---
 
@@ -589,8 +589,8 @@ terraform destroy -auto-approve
 > - RDS: ~5 mins
 > - Networking: ~10-15 mins (NAT GW + subnet ENI cleanup)
 
-> ⚠️ **Do NOT kill the process** — especially during subnet deletion!
-> ENI cleanup takes time. Be patient — it will complete.
+> ⚠️ **Do NOT kill the process** - especially during subnet deletion!
+> ENI cleanup takes time. Be patient - it will complete.
 
 ### Verify everything is destroyed
 ```bash
@@ -616,9 +616,9 @@ terraform state list
 
 ## 14. Troubleshooting
 
-### Issue 1 — Subnet deletion stuck for 15+ minutes
+### Issue 1 - Subnet deletion stuck for 15+ minutes
 **Cause:** Lambda ENIs attached to subnets blocking deletion
-**Fix:** Let it run — do NOT kill! It will complete eventually (15-20 mins max)
+**Fix:** Let it run - do NOT kill! It will complete eventually (15-20 mins max)
 ```bash
 # Check stuck ENIs
 aws ec2 describe-network-interfaces \
@@ -629,7 +629,7 @@ aws ec2 describe-network-interfaces \
 
 ---
 
-### Issue 2 — RDS subnet group AZ error
+### Issue 2 - RDS subnet group AZ error
 **Error:** `DBSubnetGroupDoesNotCoverEnoughAZs`
 **Cause:** Subnet group needs subnets in at least 2 different AZs
 **Fix:** Use subnets from different AZs in `modules/rds/main.tf`:
@@ -644,7 +644,7 @@ subnet_ids = [
 
 ---
 
-### Issue 3 — Glue job failing with security group error
+### Issue 3 - Glue job failing with security group error
 **Error:** `At least one security group must open all ingress ports`
 **Fix:** Add self-referencing all-port ingress rule to security group:
 ```hcl
@@ -659,7 +659,7 @@ ingress {
 
 ---
 
-### Issue 4 — Step Functions crawler ARN invalid
+### Issue 4 - Step Functions crawler ARN invalid
 **Error:** `arn:aws:states:::glue:startCrawler is not recognized`
 **Fix:** Use AWS SDK integration ARN:
 ```
@@ -668,22 +668,22 @@ arn:aws:states:::aws-sdk:glue:startCrawler
 
 ---
 
-### Issue 5 — JSONata + ResultPath conflict
+### Issue 5 - JSONata + ResultPath conflict
 **Error:** `field 'ResultPath' is only supported for the 'JSONPath' QueryLanguage`
 **Fix:** Remove `ResultPath` from all states when using `QueryLanguage = "JSONata"`
 
 ---
 
-### Issue 6 — `terraform.tfvars` overriding `variables.tf` defaults
+### Issue 6 - `terraform.tfvars` overriding `variables.tf` defaults
 **Symptom:** Resource names show wrong project name
-**Fix:** Always check `terraform.tfvars` — it overrides ALL defaults!
+**Fix:** Always check `terraform.tfvars` - it overrides ALL defaults!
 ```bash
 cat terraform.tfvars
 ```
 
 ---
 
-### Issue 7 — BucketAlreadyOwnedByYou error
+### Issue 7 - BucketAlreadyOwnedByYou error
 **Error:** S3 bucket already exists in your account
 **Fix:** Either import it or use a different bucket name:
 ```bash
@@ -693,7 +693,7 @@ terraform import module.s3.aws_s3_bucket.main existing-bucket-name
 
 ---
 
-### Issue 8 — EC2 Instance Connect failing
+### Issue 8 - EC2 Instance Connect failing
 **Error:** `Error establishing SSH connection`
 **Fix:** Add SSH ingress rule to security group:
 ```hcl
@@ -712,35 +712,35 @@ ingress {
 
 If you need to completely rebuild from a clean state:
 
-### Step 1 — Clone repo
+### Step 1 - Clone repo
 ```bash
 git clone https://github.com/krohit-bkk/aws-de-tf.git
 cd aws-de-tf
 ```
 
-### Step 2 — Create `terraform.tfvars`
+### Step 2 - Create `terraform.tfvars`
 ```bash
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars with your values
 vim terraform.tfvars
 ```
 
-### Step 3 — Initialize
+### Step 3 - Initialize
 ```bash
 terraform init
 ```
 
-### Step 4 — Preview
+### Step 4 - Preview
 ```bash
 terraform plan
 ```
 
-### Step 5 — Deploy
+### Step 5 - Deploy
 ```bash
 terraform apply -auto-approve
 ```
 
-### Step 6 — Trigger pipeline
+### Step 6 - Trigger pipeline
 ```bash
 aws stepfunctions start-execution \
   --state-machine-arn "arn:aws:states:ap-south-1:<account-id>:stateMachine:<project-name>-step-function-01" \
@@ -748,15 +748,15 @@ aws stepfunctions start-execution \
   --input '{}'
 ```
 
-### Step 7 — Verify in AWS Console
+### Step 7 - Verify in AWS Console
 ```
-✅ VPC + Networking — EC2 → VPC
-✅ Lambda Functions — Lambda → Functions
-✅ RDS Instance — RDS → Databases
-✅ Glue Jobs — Glue → ETL Jobs
-✅ Step Functions — Step Functions → State Machines
-✅ S3 Data — S3 → tf-kr-de-analytics-demo-np-01
-✅ Athena — Athena → Query Editor → tf_prj_01_db_on_s3
+✅ VPC + Networking - EC2 → VPC
+✅ Lambda Functions - Lambda → Functions
+✅ RDS Instance - RDS → Databases
+✅ Glue Jobs - Glue → ETL Jobs
+✅ Step Functions - Step Functions → State Machines
+✅ S3 Data - S3 → tf-kr-de-analytics-demo-np-01
+✅ Athena - Athena → Query Editor → tf_prj_01_db_on_s3
 ```
 
 ---
@@ -792,4 +792,4 @@ terraform destroy -auto-approve
 ---
 
 *Last updated: March 2026*
-*Author: Kumar Rohit — [@krohit-bkk](https://github.com/krohit-bkk)*
+*Author: Kumar Rohit - [@krohit-bkk](https://github.com/krohit-bkk)*
