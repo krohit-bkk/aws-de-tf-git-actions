@@ -5,6 +5,7 @@
 # Terraform working directory
 .terraform/
 .terraform.lock.hcl
+.terraform.tfstate.lock.info
 
 # Variable values (contains sensitive info)
 terraform.tfvars
