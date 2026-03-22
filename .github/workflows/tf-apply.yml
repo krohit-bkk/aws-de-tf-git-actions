@@ -9,7 +9,9 @@ jobs:
   terraform-apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
-
+    concurrency: 
+      group: terraform-apply
+      cancel-in-progress: false
     steps:
       # Step 1 - Checkout code
       - name: Checkout code

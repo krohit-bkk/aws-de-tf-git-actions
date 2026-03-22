@@ -67,6 +67,7 @@ module "glue" {
   rds_db_name              = module.rds.rds_db_name
   rds_secret_arn           = module.rds.rds_secret_arn
   glue_jobs_log_group_name = module.cloudwatch.glue_jobs_log_group_name
+  depends_on               = [module.s3]    
 }
 
 # Setup Step Functions
