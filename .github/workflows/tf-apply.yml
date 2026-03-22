@@ -1,0 +1,56 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1 - Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2 - Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      # Step 3 - Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      # Step 4 - Terraform Init
+      - name: Terraform Init
+        run: terraform init
+
+      # Step 5 - Terraform Validate
+      - name: Terraform Validate
+        run: terraform validate
+
+      # Step 6 - Terraform Plan
+      - name: Terraform Plan
+        run: terraform plan -no-color
+        env:
+          TF_VAR_account_id:     ${{ secrets.TF_VAR_account_id }}
+          TF_VAR_s3_bucket_name: ${{ secrets.TF_VAR_s3_bucket_name }}
+          TF_VAR_project_name:   ${{ secrets.TF_VAR_project_name }}
+          TF_VAR_aws_region:     ${{ secrets.AWS_REGION }}
+
+      # Step 7 - Terraform Apply
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+        env:
+          TF_VAR_account_id:     ${{ secrets.TF_VAR_account_id }}
+          TF_VAR_s3_bucket_name: ${{ secrets.TF_VAR_s3_bucket_name }}
+          TF_VAR_project_name:   ${{ secrets.TF_VAR_project_name }}
+          TF_VAR_aws_region:     ${{ secrets.AWS_REGION }}
