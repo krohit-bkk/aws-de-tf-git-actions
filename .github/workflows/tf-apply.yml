@@ -12,6 +12,11 @@ jobs:
     concurrency: 
       group: terraform-apply
       cancel-in-progress: false
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
       # Step 1 - Checkout code
       - name: Checkout code
@@ -27,9 +32,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_REGION }}
+          role-to-assume: arn:aws:iam::428146723175:role/github-actions-tf-role
+          aws-region:     ${{ secrets.AWS_REGION }}
 
       # Step 4 - Terraform Init
       - name: Terraform Init

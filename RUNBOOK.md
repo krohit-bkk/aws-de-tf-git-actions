@@ -12,16 +12,18 @@
 3. [AWS CLI Configuration](#3-aws-cli-configuration)
 4. [Terraform Installation](#4-terraform-installation)
 5. [Project Structure Creation](#5-project-structure-creation)
-6. [Module Implementation Order](#6-module-implementation-order)
-7. [Terraform Workflow](#7-terraform-workflow)
-8. [Deployment](#8-deployment)
-9. [Testing the Pipeline](#9-testing-the-pipeline)
-10. [Querying Data](#10-querying-data)
-11. [Useful Terraform Commands](#11-useful-terraform-commands)
-12. [Cost Management](#12-cost-management)
-13. [Teardown](#13-teardown)
-14. [Troubleshooting](#14-troubleshooting)
-15. [Rebuild from Scratch](#15-rebuild-from-scratch)
+6. [Bootstrap - OIDC + Remote State Setup](#6-bootstrap--oidc--remote-state-setup)
+7. [GitHub Secrets Setup](#7-github-secrets-setup)
+8. [Module Implementation Order](#8-module-implementation-order)
+9. [Terraform Workflow](#9-terraform-workflow)
+10. [Deployment](#10-deployment)
+11. [Testing the Pipeline](#11-testing-the-pipeline)
+12. [Querying Data](#12-querying-data)
+13. [Useful Terraform Commands](#13-useful-terraform-commands)
+14. [Cost Management](#14-cost-management)
+15. [Teardown](#15-teardown)
+16. [Troubleshooting](#16-troubleshooting)
+17. [Rebuild from Scratch](#17-rebuild-from-scratch)
 
 ---
 
@@ -34,7 +36,7 @@ terraform --version    # >= 1.6.0
 aws --version          # >= 2.x
 python3 --version      # >= 3.12
 git --version
-docker --version       # optional, for LocalStack
+docker --version       # optional, inj future we will use docker for LocalStack
 ```
 
 ### Install Terraform (Ubuntu/Linux)
@@ -65,60 +67,41 @@ cd ~/Learning/Terraform/AWS_DE_TF
 
 ### Create root level files
 ```bash
-touch main.tf
-touch variables.tf
-touch outputs.tf
-touch providers.tf
-touch terraform.tfvars
-touch terraform.tfvars.example
-touch .gitignore
-touch README.md
+touch main.tf variables.tf outputs.tf providers.tf
+touch terraform.tfvars terraform.tfvars.example
+touch .gitignore README.md
 ```
 
-### Create module folders
+### Create module folders and files
 ```bash
-mkdir -p modules/networking
-mkdir -p modules/iam
-mkdir -p modules/cloudwatch
-mkdir -p modules/s3
-mkdir -p modules/lambda
-mkdir -p modules/rds
-mkdir -p modules/glue
-mkdir -p modules/step_functions
-```
+for module in networking iam cloudwatch s3 lambda rds glue step_functions; do
+  mkdir -p modules/$module
+  touch modules/$module/main.tf modules/$module/variables.tf modules/$module/outputs.tf
+done
 
-### Create module files
-```bash
-# networking
-touch modules/networking/main.tf modules/networking/variables.tf modules/networking/outputs.tf
-
-# iam
-touch modules/iam/main.tf modules/iam/variables.tf modules/iam/outputs.tf
-
-# cloudwatch
-touch modules/cloudwatch/main.tf modules/cloudwatch/variables.tf modules/cloudwatch/outputs.tf
-
-# s3
-touch modules/s3/main.tf modules/s3/variables.tf modules/s3/outputs.tf
-
-# lambda
-touch modules/lambda/main.tf modules/lambda/variables.tf modules/lambda/outputs.tf
+# Lambda function files
 mkdir -p modules/lambda/functions/create_s3_folders
 mkdir -p modules/lambda/functions/ingest_files_to_s3
 touch modules/lambda/functions/create_s3_folders/lambda_function.py
 touch modules/lambda/functions/ingest_files_to_s3/lambda_function.py
 
-# rds
-touch modules/rds/main.tf modules/rds/variables.tf modules/rds/outputs.tf
-
-# glue
-touch modules/glue/main.tf modules/glue/variables.tf modules/glue/outputs.tf
+# Glue script files
 mkdir -p modules/glue/scripts
 touch modules/glue/scripts/merge_customers_accounts.py
 touch modules/glue/scripts/push_to_rds.py
 
-# step_functions
-touch modules/step_functions/main.tf modules/step_functions/variables.tf modules/step_functions/outputs.tf
+# GitHub Actions workflows
+mkdir -p .github/workflows
+touch .github/workflows/tf-plan.yml
+touch .github/workflows/tf-apply.yml
+touch .github/workflows/tf-destroy.yml
+
+# Scripts - setup OIDC + remote state backend and utilities
+mkdir -p scripts/setup_oidc_github_actions
+touch scripts/cleanup.sh
+touch scripts/setup_oidc_github_actions/github_actions_oidc_role_setup.sh
+touch scripts/setup_oidc_github_actions/github_actions_oidc_role_setup_wrapper_example.sh
+touch scripts/setup_oidc_github_actions/terraform_state_management_setup.sh
 ```
 
 ### Verify structure
@@ -135,7 +118,7 @@ tree .
 aws configure
 # AWS Access Key ID: <your-access-key>
 # AWS Secret Access Key: <your-secret-key>
-# Default region name: ap-south-1
+# Default region name: <your-aws-region>
 # Default output format: json
 ```
 
@@ -148,8 +131,8 @@ Expected output:
 ```json
 {
     "UserId": "XXXXXXXXXXXXXXXXXXXXX",
-    "Account": "123456789012",
-    "Arn": "arn:aws:iam::123456789012:user/your-user"
+    "Account": "<your-aws-account-id>",
+    "Arn": "arn:aws:iam::<your-aws-account-id>:user/<your-user>"
 }
 ```
 
@@ -168,6 +151,9 @@ terraform --version
 
 ### `.gitignore`
 ```
+# Bash scripts for setting up GitHub Actions OIDC role and policy
+**/github_actions_oidc_role_setup_wrapper.sh
+
 # Terraform state files
 *.tfstate
 *.tfstate.backup
@@ -175,6 +161,7 @@ terraform --version
 # Terraform working directory
 .terraform/
 .terraform.lock.hcl
+.terraform.tfstate.lock.info
 
 # Variable values (contains sensitive info)
 terraform.tfvars
@@ -203,13 +190,16 @@ notes.txt
 
 ### `terraform.tfvars.example`
 ```hcl
-aws_region     = "ap-south-1"
+aws_region     = "<your-aws-region>"
 project_name   = "tf-prj-01"
-account_id     = "YOUR_AWS_ACCOUNT_ID"
-s3_bucket_name = "YOUR_UNIQUE_BUCKET_NAME"
+account_id     = "<YOUR_AWS_ACCOUNT_ID>"
+s3_bucket_name = "<YOUR_UNIQUE_BUCKET_NAME>"
 ```
 
 ### `terraform.tfvars` (gitignored - fill in your values)
+Copy the template from `terraform.tfvars.example` into `terraform.tfvars` and add your values for `account_id` and `s3_bucket_name`.
+
+`terraform.tfvars` file should look like this:
 ```hcl
 aws_region     = "ap-south-1"
 project_name   = "tf-prj-01"
@@ -217,7 +207,7 @@ account_id     = "123456789012"
 s3_bucket_name = "your-unique-bucket-name"
 ```
 
-### `providers.tf`
+### `providers.tf` (with remote state backend)
 ```hcl
 terraform {
   required_providers {
@@ -231,6 +221,14 @@ terraform {
     }
   }
   required_version = ">= 1.6.0"
+
+  backend "s3" {
+    bucket         = "<your-unique-bucket-name-for-tf-state>"
+    key            = "terraform.tfstate"
+    region         = "<your-aws-region>"
+    dynamodb_table = "tf-state-lock"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
@@ -267,19 +265,170 @@ variable "s3_bucket_name" {
 
 ---
 
-## 6. Module Implementation Order
+## 6. Bootstrap - OIDC + Remote State Setup
+
+> ⚠️ **Run once manually before using GitHub Actions!**
+> This is a one-time bootstrap step. After this, everything is automated.
+
+### What this creates:
+```
+AWS IAM
+  └── OIDC Identity Provider (GitHub)
+  └── IAM Role: github-actions-tf-role
+        └── Trust Policy: only your GitHub repo can assume it
+        └── Permission Policy: all AWS services Terraform needs
+
+AWS S3
+  └── tf-state-kr-de-analytics  (Terraform remote state)
+        └── Versioning enabled
+        └── Encryption enabled
+        └── Public access blocked
+
+AWS DynamoDB
+  └── tf-state-lock  (Terraform state locking)
+```
+
+### Step 1 - Copy and configure wrapper script
+```bash
+cp scripts/setup_oidc_github_actions/github_actions_oidc_role_setup_wrapper_example.sh \
+   scripts/setup_oidc_github_actions/github_actions_oidc_role_setup_wrapper.sh
+```
+
+Edit with your actual values in - `scripts/setup_oidc_github_actions/github_actions_oidc_role_setup_wrapper.sh`:
+
+```bash
+ACCOUNT_ID="YOUR_AWS_ACCOUNT_ID"
+REGION="<your-aws-region>"
+GITHUB_ORG="<your-github-organization>"
+GITHUB_REPO="<your-repo-name>"
+ROLE_NAME="github-actions-tf-role"
+POLICY_NAME="github-actions-tf-policy"
+STATE_BUCKET="<your-unique-buckeet-name-for-tf-state>"
+DYNAMODB_TABLE="tf-state-lock"
+```
+
+### Step 2 - Run bootstrap
+```bash
+bash scripts/setup_oidc_github_actions/github_actions_oidc_role_setup_wrapper.sh
+```
+
+Expected output summary should have the following details:
+```
+OIDC Provider: arn:aws:iam::<your-aws-account-id>:oidc-provider/token.actions.githubusercontent.com
+IAM Role ARN : arn:aws:iam::<your-aws-account-id>:role/github-actions-tf-role
+Policy ARN   : arn:aws:iam::<your-aws-account-id>:policy/github-actions-tf-policy
+State Bucket : your-unique-tf-state-bucket
+DynamoDB     : tf-state-lock
+```
+
+### Step 3 - Verify OIDC provider created
+```bash
+aws iam list-open-id-connect-providers
+```
+It should produce an output like:
+```bash
+{
+    "OpenIDConnectProviderList": [
+        {
+            "Arn": "arn:aws:iam::<your-aws-account-id>:oidc-provider/token.actions.githubusercontent.com"
+        }
+    ]
+}
+```
+
+### Step 4 - Verify IAM role created
+```bash
+aws iam get-role --role-name github-actions-tf-role
+```
+Expected output for this step should be:
+```bash
+{
+    "Role": {
+        "Path": "/",
+        "RoleName": "github-actions-tf-role",
+        "RoleId": "AROAWHL4IRFTQKPREFUX2",
+        "Arn": "arn:aws:iam::<your-aws-account-id>:role/github-actions-tf-role",
+        "CreateDate": "2026-03-23T19:23:56+00:00",
+        "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Federated": "arn:aws:iam::<your-aws-account-id>:oidc-provider/token.actions.githubusercontent.com"
+                    },
+                    "Action": "sts:AssumeRoleWithWebIdentity",
+                    "Condition": {
+                        "StringEquals": {
+                            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+                        },
+                        "StringLike": {
+                            "token.actions.githubusercontent.com:sub": "repo:<your-github-organization>/<your-repo-name>:*"
+                        }
+                    }
+                }
+            ]
+        },
+        "Description": "Role for GitHub Actions to run Terraform for aws-de-tf-git-actions",
+        "MaxSessionDuration": 3600,
+        "RoleLastUsed": {}
+    }
+}
+
+```
+
+### Step 5 - Verify S3 state bucket created
+```bash
+aws s3 ls | grep tf-state
+```
+Expected output should be:
+```bash
+2026-03-24 01:19:22 <your-unique-buckeet-name-for-tf-state>
+```
+
+### Step 6 - Verify DynamoDB table created
+```bash
+aws dynamodb list-tables --query "TableNames[?contains(@, 'tf-state')]"
+```
+Expected output should be:
+```bash
+[
+    "tf-state-lock"
+]
+```
+---
+
+## 7. GitHub Secrets Setup
+
+```
+GitHub --> your-repo --> Settings --> Secrets and variables --> Actions --> New repository secret
+```
+
+Add these secrets:
+
+| Secret Name | Value | Notes |
+|---|---|---|
+| `AWS_REGION` | `ap-south-1` | Your AWS region |
+| `TF_VAR_account_id` | `123456789012` | Your AWS account ID |
+| `TF_VAR_s3_bucket_name` | `your-unique-bucket` | Data S3 bucket name |
+| `TF_VAR_project_name` | `tf-prj-01` | Project prefix |
+
+
+---
+
+## 8. Module Implementation Order
 
 > ⚠️ Always implement modules in this order to respect dependencies!
 
 ```
-1. networking      → VPC, Subnets, IGW, NAT GW, Route Tables, SG, S3 Endpoint
-2. iam             → All IAM Roles & Policies
-3. cloudwatch      → Log Groups
-4. s3              → S3 Bucket
-5. lambda          → Lambda Functions
-6. rds             → RDS MySQL Instance
-7. glue            → Glue Jobs, Crawlers, Connections, Catalog DBs
-8. step_functions  → State Machine
+1. networking      --> VPC, Subnets, IGW, NAT GW, Route Tables, SG, S3 Endpoint
+2. iam             --> All IAM Roles & Policies
+3. cloudwatch      --> Log Groups
+4. s3              --> S3 Bucket
+5. lambda          --> Lambda Functions
+6. rds             --> RDS MySQL Instance
+7. glue            --> Glue Jobs, Crawlers, Connections, Catalog DBs
+8. step_functions  --> State Machine
 ```
 
 ### Dependency Map
@@ -302,64 +451,46 @@ glue ─────────────────────────
 
 ---
 
-## 7. Terraform Workflow
+## 9. Deployment
 
-### Initialize (run after adding new modules or providers)
+### Option A - Via GitHub Actions (recommended)
+
+**Plan (on PR):**
 ```bash
-terraform init
+git checkout -b feature/my-change
+# make changes
+git add .
+git commit -m "feat: my change"
+git push origin feature/my-change
+# Create PR on GitHub --> terraform plan runs automatically
+# Review plan output in PR comment
 ```
 
-### Preview changes
+**Apply (on merge):**
 ```bash
-terraform plan
+# Merge PR to main --> terraform apply runs automatically
 ```
 
-### Apply changes
-```bash
-terraform apply
-# or with auto-approve (skip confirmation)
-terraform apply -auto-approve
+**Destroy (manual):**
 ```
-
-### Check state
-```bash
-# List all managed resources
-terraform state list
-
-# Show details of specific resource
-terraform state show module.networking.aws_vpc.main
-
-# Show full state
-terraform show
-```
-
-### Force refresh state from AWS
-```bash
-terraform plan -refresh=true
+GitHub --> Actions --> Terraform Destroy --> Run workflow --> Type "DESTROY" --> Run workflow
 ```
 
 ---
 
-## 8. Deployment
+### Option B - Locally
 
-### Step 1 - Initialize
+**Step 1 - Initialize:**
 ```bash
 terraform init
 ```
 
-Expected output:
-```
-Terraform has been successfully initialized!
-```
-
-### Step 2 - Plan
+**Step 2 - Plan:**
 ```bash
 terraform plan
 ```
 
-Expected resources on first run: **53 resources to add**
-
-### Step 3 - Apply
+**Step 3 - Apply:**
 ```bash
 terraform apply -auto-approve
 ```
@@ -370,18 +501,12 @@ terraform apply -auto-approve
 > - RDS: ~8 mins (longest resource)
 > - Everything else: seconds
 
-### Step 4 - Verify deployment
+**Step 4 - Verify deployment:**
 ```bash
 # Check VPC
 aws ec2 describe-vpcs \
   --filters "Name=tag:project,Values=tf-prj-01" \
   --query 'Vpcs[*].{ID:VpcId,CIDR:CidrBlock}' \
-  --output table
-
-# Check Subnets and their AZs
-aws ec2 describe-subnets \
-  --filters "Name=tag:project,Values=tf-prj-01" \
-  --query 'Subnets[*].{Name:Tags[?Key==`Name`].Value|[0],AZ:AvailabilityZone,ID:SubnetId}' \
   --output table
 
 # Check Lambda functions
@@ -392,89 +517,71 @@ aws lambda list-functions \
 # Check RDS
 aws rds describe-db-instances \
   --db-instance-identifier tf-prj-01-rds-mysql-01 \
-  --query 'DBInstances[0].{ID:DBInstanceIdentifier,Status:DBInstanceStatus,AZ:AvailabilityZone}' \
+  --query 'DBInstances[0].{ID:DBInstanceIdentifier,Status:DBInstanceStatus}' \
   --output table
 
 # Check Step Functions
 aws stepfunctions list-state-machines \
-  --query 'stateMachines[?starts_with(name, `tf-prj-01`)].[name,stateMachineArn]' \
+  --query 'stateMachines[?starts_with(name, `tf-prj-01`)].[name]' \
   --output table
 ```
 
 ---
 
-## 9. Testing the Pipeline
+## 10. Testing the Pipeline
 
 ### Trigger Step Functions via AWS CLI
 ```bash
 aws stepfunctions start-execution \
-  --state-machine-arn "arn:aws:states:ap-south-1:428146723175:stateMachine:tf-prj-01-step-function-01" \
+  --state-machine-arn "arn:aws:states:ap-south-1:<your-aws-account-id>:stateMachine:tf-prj-01-step-function-01" \
   --name "test-run-$(date +%Y%m%d-%H%M%S)" \
   --input '{}'
 ```
 
 ### Check execution status
 ```bash
-# List recent executions
 aws stepfunctions list-executions \
-  --state-machine-arn "arn:aws:states:ap-south-1:428146723175:stateMachine:tf-prj-01-step-function-01" \
+  --state-machine-arn "arn:aws:states:ap-south-1:<your-aws-account-id>:stateMachine:tf-prj-01-step-function-01" \
   --output table
-
-# Describe specific execution
-aws stepfunctions describe-execution \
-  --execution-arn "<execution-arn-from-above>"
 ```
 
 ### Verify S3 data after pipeline run
 ```bash
-# Check raw data landed
-aws s3 ls s3://tf-kr-de-analytics-demo-np-01/data/raw/accounts/ --recursive
-
-# Check harmonized data
-aws s3 ls s3://tf-kr-de-analytics-demo-np-01/data/harmonized/customers_to_accounts/ --recursive
-
-# Check Glue scripts uploaded
-aws s3 ls s3://tf-kr-de-analytics-demo-np-01/scripts/glue/
+aws s3 ls s3://<YOUR_UNIQUE_BUCKET_NAME>/data/raw/accounts/ --recursive
+aws s3 ls s3://<YOUR_UNIQUE_BUCKET_NAME>/data/harmonized/ --recursive
+aws s3 ls s3://<YOUR_UNIQUE_BUCKET_NAME>/scripts/glue/
 ```
 
 ### Expected pipeline execution time
 ```
-Lambda 1 (folder creation)  → ~2 seconds
-Lambda 2 (file ingestion)   → ~10 seconds
-Glue ETL 1 (merge)          → ~3-5 minutes
-Glue ETL 2 (push to RDS)    → ~3-5 minutes
-Crawlers (parallel)         → ~2 minutes
-─────────────────────────────────────────
-Total                       → ~10-15 minutes
+Lambda 1 (folder creation)  --> ~2    seconds
+Lambda 2 (file ingestion)   --> ~10   seconds
+Glue ETL 1 (merge)          --> ~1-2  minutes
+Glue ETL 2 (push to RDS)    --> ~1-2  minutes
+Crawlers (parallel)         --> ~2    minutes
+─────────────────────────────────────────────
+Total                       --> ~5-10 minutes
 ```
 
 ---
 
-## 10. Querying Data
+## 11. Querying Data
 
 ### Query S3 data via Athena
 ```
-AWS Console → Athena → Query Editor
-→ Database: tf_prj_01_db_on_s3
-→ Run queries:
+AWS Console --> Athena --> Query Editor --> Database: tf_prj_01_db_on_s3
 ```
 ```sql
--- See available tables
 SHOW TABLES;
-
--- Preview harmonized data
 SELECT * FROM customers_to_accounts LIMIT 10;
-
--- Count records
 SELECT COUNT(*) FROM customers_to_accounts;
 ```
 
-### Query RDS MySQL via EC2 bastion
+## 12.  Query RDS MySQL via EC2 Bastion
 
 **Step 1 - Connect to EC2 via Instance Connect:**
 ```
-AWS Console → EC2 → Instances → your-bastion-instance
-→ Connect → EC2 Instance Connect → Connect
+AWS Console --> EC2 --> Instances --> your-bastion-instance --> Connect --> EC2 Instance Connect --> Connect
 ```
 
 **Step 2 - Install MySQL client:**
@@ -485,17 +592,14 @@ sudo dnf install mariadb105 -y
 **Step 3 - Get RDS password from Secrets Manager:**
 ```bash
 aws secretsmanager get-secret-value \
-  --secret-id '<arn-for-rds-instance-secret-manager-entry>' \
+  --secret-id '<arn-for-rds-secret>' \  # get this from AWS Console --> RDS --> Secrets Manager
   --query SecretString \
   --output text | jq -r '.password'
 ```
 
 **Step 4 - Connect to RDS:**
 ```bash
-mysql -h tf-prj-01-rds-mysql-01.blahblah.ap-south-1.rds.amazonaws.com \
-  -P 3306 \
-  -u admin \
-  -p
+mysql -h <rds-endpoint> -P 3306 -u admin -p
 ```
 
 **Step 5 - Query data:**
@@ -508,7 +612,7 @@ SELECT * FROM customer_to_accounts LIMIT 10;
 
 ---
 
-## 11. Useful Terraform Commands
+## 12. Useful Terraform Commands
 
 ```bash
 # List all resources in state
@@ -520,7 +624,6 @@ terraform state list | wc -l
 # Show specific resource details
 terraform state show module.rds.aws_db_instance.main
 terraform state show module.networking.aws_vpc.main
-terraform state show module.lambda.aws_lambda_function.functions[\"001-create-ingestion-folders-on-s3\"]
 
 # Import existing resource into state
 terraform import module.s3.aws_s3_bucket.main my-existing-bucket
@@ -547,7 +650,7 @@ terraform validate
 
 ---
 
-## 12. Cost Management
+## 13. Cost Management
 
 ### Most expensive resources (stop/destroy when not in use):
 
@@ -556,6 +659,7 @@ terraform validate
 | NAT Gateway | ~$35/month |
 | RDS db.t4g.micro | ~$12/month |
 | S3 storage | ~$0.023/GB/month |
+| DynamoDB (state lock) | ~$0 (PAY_PER_REQUEST, minimal usage) |
 | Lambda | Free tier (1M requests/month) |
 | Glue | $0.44/DPU-hour (only when running) |
 | Step Functions | Free tier (4000 transitions/month) |
@@ -576,9 +680,14 @@ aws rds start-db-instance \
 
 ---
 
-## 13. Teardown
+## 14. Teardown
 
-### Full destroy
+### Via GitHub Actions (recommended):
+```
+GitHub --> Actions --> Terraform Destroy --> Run workflow --> Type "DESTROY" --> Run
+```
+
+### Via CLI:
 ```bash
 terraform destroy -auto-approve
 ```
@@ -592,9 +701,13 @@ terraform destroy -auto-approve
 > ⚠️ **Do NOT kill the process** - especially during subnet deletion!
 > ENI cleanup takes time. Be patient - it will complete.
 
-### Verify everything is destroyed
+### If state is lost - manual cleanup:
 ```bash
-# Should return empty
+bash scripts/cleanup.sh
+```
+
+### Verify everything is destroyed:
+```bash
 aws ec2 describe-vpcs \
   --filters "Name=tag:project,Values=tf-prj-01" \
   --output table
@@ -606,15 +719,9 @@ aws lambda list-functions \
 aws s3 ls | grep tf-kr-de-analytics
 ```
 
-### Verify state is empty
-```bash
-terraform state list
-# Should return no output
-```
-
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 ### Issue 1 - Subnet deletion stuck for 15+ minutes
 **Cause:** Lambda ENIs attached to subnets blocking deletion
@@ -625,6 +732,9 @@ aws ec2 describe-network-interfaces \
   --filters "Name=vpc-id,Values=<vpc-id>" \
   --query 'NetworkInterfaces[*].{ID:NetworkInterfaceId,Status:Status,Description:Description}' \
   --output table
+
+# If status is 'available' - manually delete
+aws ec2 delete-network-interface --network-interface-id <eni-id>
 ```
 
 ---
@@ -674,26 +784,43 @@ arn:aws:states:::aws-sdk:glue:startCrawler
 
 ---
 
-### Issue 6 - `terraform.tfvars` overriding `variables.tf` defaults
-**Symptom:** Resource names show wrong project name
-**Fix:** Always check `terraform.tfvars` - it overrides ALL defaults!
+### Issue 6 - State lost in CI/CD (duplicate resources on re-apply)
+**Error:** `EntityAlreadyExists`, `BucketAlreadyOwnedByYou` etc.
+**Cause:** GitHub Actions VM destroyed state file after each run
+**Fix:** Always set up remote state BEFORE using CI/CD:
 ```bash
-cat terraform.tfvars
+bash scripts/setup_oidc_github_actions/github_actions_oidc_role_setup_wrapper.sh
 ```
 
 ---
 
-### Issue 7 - BucketAlreadyOwnedByYou error
-**Error:** S3 bucket already exists in your account
-**Fix:** Either import it or use a different bucket name:
-```bash
-terraform import module.s3.aws_s3_bucket.main existing-bucket-name
-# or change s3_bucket_name in terraform.tfvars
+### Issue 7 - GitHub Actions OIDC auth failing
+**Error:** `Could not assume role with OIDC`
+**Fix checklist:**
+```
+✅ OIDC provider created in AWS IAM
+✅ Trust policy has correct repo name (case sensitive!)
+✅ permissions: id-token: write in workflow
+✅ role-to-assume ARN is correct
+✅ No AWS_ACCESS_KEY_ID/SECRET in secrets (causes conflict!)
 ```
 
 ---
 
-### Issue 8 - EC2 Instance Connect failing
+### Issue 8 - Glue scripts not found (S3 bucket doesn't exist)
+**Error:** `NoSuchBucket when uploading Glue scripts`
+**Cause:** Glue module runs before S3 module creates the bucket
+**Fix:** Add `depends_on` in root `main.tf`:
+```hcl
+module "glue" {
+  ...
+  depends_on = [module.s3]
+}
+```
+
+---
+
+### Issue 9 - EC2 Instance Connect failing
 **Error:** `Error establishing SSH connection`
 **Fix:** Add SSH ingress rule to security group:
 ```hcl
@@ -704,89 +831,6 @@ ingress {
   cidr_blocks = ["0.0.0.0/0"]
   description = "Allow SSH access"
 }
-```
-
----
-
-## 15. Rebuild from Scratch
-
-If you need to completely rebuild from a clean state:
-
-### Step 1 - Clone repo
-```bash
-git clone https://github.com/krohit-bkk/aws-de-tf.git
-cd aws-de-tf
-```
-
-### Step 2 - Create `terraform.tfvars`
-```bash
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your values
-vim terraform.tfvars
-```
-
-### Step 3 - Initialize
-```bash
-terraform init
-```
-
-### Step 4 - Preview
-```bash
-terraform plan
-```
-
-### Step 5 - Deploy
-```bash
-terraform apply -auto-approve
-```
-
-### Step 6 - Trigger pipeline
-```bash
-aws stepfunctions start-execution \
-  --state-machine-arn "arn:aws:states:ap-south-1:<account-id>:stateMachine:<project-name>-step-function-01" \
-  --name "fresh-run-01" \
-  --input '{}'
-```
-
-### Step 7 - Verify in AWS Console
-```
-✅ VPC + Networking - EC2 → VPC
-✅ Lambda Functions - Lambda → Functions
-✅ RDS Instance - RDS → Databases
-✅ Glue Jobs - Glue → ETL Jobs
-✅ Step Functions - Step Functions → State Machines
-✅ S3 Data - S3 → tf-kr-de-analytics-demo-np-01
-✅ Athena - Athena → Query Editor → tf_prj_01_db_on_s3
-```
-
----
-
-## 📌 Quick Reference Card
-
-```bash
-# Initialize
-terraform init
-
-# Preview
-terraform plan
-
-# Deploy
-terraform apply -auto-approve
-
-# Check state
-terraform state list
-
-# Trigger pipeline
-aws stepfunctions start-execution \
-  --state-machine-arn "arn:aws:states:ap-south-1:123456789012:stateMachine:tf-prj-01-step-function-01" \
-  --name "run-$(date +%Y%m%d)" \
-  --input '{}'
-
-# Stop RDS (save cost)
-aws rds stop-db-instance --db-instance-identifier tf-prj-01-rds-mysql-01
-
-# Destroy everything
-terraform destroy -auto-approve
 ```
 
 ---

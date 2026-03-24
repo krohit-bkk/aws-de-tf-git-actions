@@ -11,32 +11,43 @@ jobs:
   terraform-destroy:
     name: Terraform Destroy
     runs-on: ubuntu-latest
+    concurrency: 
+      group: terraform-apply 
+      cancel-in-progress: false 
+
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
+      # Step 1 - Validate confirmation input
       - name: Validate confirmation
         if: ${{ github.event.inputs.confirm_destroy != 'DESTROY' }}
         run: |
           echo "You must type DESTROY to confirm!"
           exit 1
-
+      # Step 2 - Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Step 3 - Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.0
 
+      # Step 4 - Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_REGION }}
+          role-to-assume: arn:aws:iam::428146723175:role/github-actions-tf-role
+          aws-region:     ${{ secrets.AWS_REGION }}
 
+      # Step 5 - Terraform Init
       - name: Terraform Init
         run: terraform init
 
+      # Step 6 - Terraform Destroy
       - name: Terraform Destroy
         run: terraform destroy -auto-approve
         env:

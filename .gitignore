@@ -1,3 +1,6 @@
+# Bash scripts for setting up GitHub Actions OIDC role and policy
+**/github_actions_oidc_role_setup_wrapper.sh
+
 # Terraform state files
 *.tfstate
 *.tfstate.backup
