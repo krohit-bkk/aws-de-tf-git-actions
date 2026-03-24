@@ -14,10 +14,12 @@ GITHUB_REPO="<your-github-repository>"
 ROLE_NAME="github-actions-tf-role"
 POLICY_NAME="github-actions-tf-policy"
 
+SCRIPT_HOME="$(dirname "$(readlink -f "$0")")"
+
 # Setup OIDC provider + IAM role + policy for GitHub Actions
-bash github_actions_oidc_role_setup.sh ${ACCOUNT_ID} ${REGION} ${GITHUB_ORG} ${GITHUB_REPO} ${ROLE_NAME} ${POLICY_NAME}
+bash ${SCRIPT_HOME}/github_actions_oidc_role_setup.sh ${ACCOUNT_ID} ${REGION} ${GITHUB_ORG} ${GITHUB_REPO} ${ROLE_NAME} ${POLICY_NAME}
 
 # Setup up Terraform remote state management (S3 + DynamoDB)
 STATE_BUCKET="tf-state-kr-de-analytics"
 DYNAMODB_TABLE="tf-state-lock"
-bash terraform_state_management_setup.sh ${ACCOUNT_ID} ${REGION} ${STATE_BUCKET} ${DYNAMODB_TABLE}
+bash ${SCRIPT_HOME}/terraform_state_management_setup.sh ${ACCOUNT_ID} ${REGION} ${STATE_BUCKET} ${DYNAMODB_TABLE}
