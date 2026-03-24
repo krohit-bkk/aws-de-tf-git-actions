@@ -197,6 +197,25 @@ PERMISSIONS_POLICY=$(cat << 'EOF'
       "Effect": "Allow",
       "Action": ["dynamodb:*"],
       "Resource": "*"
+    },
+    {
+      "Sid": "KMSAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+        "kms:DescribeKey",
+        "kms:CreateGrant",
+        "kms:ListAliases",
+        "kms:CreateKey",
+        "kms:ScheduleKeyDeletion",
+        "kms:GetKeyPolicy",
+        "kms:PutKeyPolicy",
+        "kms:TagResource",
+        "kms:ListResourceTags"
+      ],
+      "Resource": "*"
     }
   ]
 }
