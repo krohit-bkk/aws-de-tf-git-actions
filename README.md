@@ -7,7 +7,15 @@ A fully automated, production-grade **AWS Data Engineering pipeline** built enti
 ---
 
 ## 🏛️ Architecture Overview
+![alt text](miscl/image.png)
 
+### Data Flow
+1. **Lambda 1** - Creates required folder structure in S3
+2. **Lambda 2** - Downloads sample CSV files from remote URL --> uploads to S3
+3. **Glue ETL 1** - Reads raw CSVs --> joins customers + accounts --> writes Parquet to S3
+4. **Glue ETL 2** - Reads harmonized Parquet --> pushes to RDS MySQL
+5. **Glue Crawlers** - Catalogs S3 and RDS data in parallel into Glue Data Catalog
+6. **Athena** - Query S3 data via Glue Catalog (comes wired out of the box!)
 ```
                         ┌───────────────────────────────────────────┐
                         │         AWS Step Functions                │
@@ -35,14 +43,6 @@ A fully automated, production-grade **AWS Data Engineering pipeline** built enti
                                        │  (S3 data)   │
                                        └──────────────┘
 ```
-
-### Data Flow
-1. **Lambda 1** - Creates required folder structure in S3
-2. **Lambda 2** - Downloads sample CSV files from remote URL --> uploads to S3
-3. **Glue ETL 1** - Reads raw CSVs --> joins customers + accounts --> writes Parquet to S3
-4. **Glue ETL 2** - Reads harmonized Parquet --> pushes to RDS MySQL
-5. **Glue Crawlers** - Catalogs S3 and RDS data in parallel into Glue Data Catalog
-6. **Athena** - Query S3 data via Glue Catalog (comes wired out of the box!)
 
 ---
 
@@ -363,7 +363,7 @@ START
   ▼
 END ✅
 ```
-
+![alt text](miscl/image1.png)
 ---
 
 ## 🗑️ Destroying Infrastructure
